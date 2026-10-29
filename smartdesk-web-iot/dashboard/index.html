@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#14213d">
+  <title>SmartDesk — Web IoT Dashboard</title>
+  <style>
+    :root { color-scheme: light; --ink:#172033; --muted:#657086; --line:#dce2ec; --panel:#fff; --bg:#f4f6fb; --accent:#2359d1; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:system-ui,-apple-system,Segoe UI,sans-serif; background:var(--bg); color:var(--ink); }
+    main { width:min(100% - 28px, 1000px); margin:24px auto 48px; }
+    h1 { margin:0 0 6px; font-size:clamp(1.6rem,4vw,2.2rem); }
+    h2 { margin:0 0 12px; font-size:1.12rem; }
+    p { line-height:1.5; }
+    .muted { color:var(--muted); }
+    .panel { background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:18px; margin-top:14px; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }
+    label { display:block; font-size:.9rem; font-weight:650; margin:10px 0 5px; }
+    input,select,button { font:inherit; border-radius:10px; padding:10px 12px; }
+    input,select { width:100%; border:1px solid #cbd3e1; background:#fff; color:var(--ink); }
+    button { border:0; background:var(--accent); color:white; font-weight:700; cursor:pointer; }
+    button.secondary { background:#e8edf7; color:#24324c; }
+    button:disabled { opacity:.45; cursor:not-allowed; }
+    .actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }
+    .metric { border:1px solid var(--line); border-radius:12px; padding:14px; min-height:100px; }
+    .metric .value { font-size:1.55rem; font-weight:750; margin-top:8px; overflow-wrap:anywhere; }
+    .metric .caption { color:var(--muted); font-size:.85rem; }
+    .status { display:inline-block; border-radius:999px; background:#e8edf7; padding:5px 10px; font-size:.85rem; font-weight:700; }
+    .log { max-height:180px; overflow:auto; white-space:pre-wrap; font: .84rem ui-monospace,SFMono-Regular,monospace; background:#101828; color:#e6edf7; padding:12px; border-radius:10px; }
+    video,canvas { display:none; }
+    .warning { border-left:4px solid #d48a00; padding-left:12px; }
+    code { overflow-wrap:anywhere; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>SmartDesk</h1>
+    <p class="muted">Dashboard IoT berbasis browser: sensor HP → MQTT publish → HiveMQ → dashboard subscribe.</p>
+    <span id="connectionStatus" class="status">Belum terhubung</span>
+  </header>
+
+  <section class="panel">
+    <h2>1. Koneksi MQTT</h2>
+    <div class="grid">
+      <div>
+        <label for="projectId">Project ID (harus sama di semua perangkat)</label>
+        <input id="projectId" value="kelompok-ganti-id" maxlength="50" autocomplete="off">
+      </div>
+      <div>
+        <label for="deviceRole">Peran perangkat ini</label>
+        <select id="deviceRole">
+          <option value="monitor">Dashboard monitor (tidak membaca sensor)</option>
+          <option value="light">HP A — Sensor cahaya</option>
+          <option value="motion">HP B — Sensor gerak</option>
+        </select>
+      </div>
+      <div>
+        <label for="deviceId">ID perangkat</label>
+        <input id="deviceId" value="dashboard" maxlength="40" autocomplete="off">
+      </div>
+    </div>
+    <div class="actions">
+      <button id="connectBtn">Connect MQTT</button>
+      <button id="disconnectBtn" class="secondary" disabled>Disconnect</button>
+    </div>
+    <p class="muted">Broker: <code>broker.hivemq.com</code>, secure WebSocket port 8884. Gunakan Project ID unik agar pesan kelompok tidak bercampur.</p>
+  </section>
+
+  <section class="panel">
+    <h2>2. Sensor di perangkat ini</h2>
+    <p id="sensorHint" class="muted">Pilih peran HP A atau HP B, lalu hubungkan MQTT. Untuk memantau saja, pilih Dashboard monitor.</p>
+    <div class="actions">
+      <button id="startSensorBtn" disabled>Mulai baca sensor</button>
+      <button id="stopSensorBtn" class="secondary" disabled>Hentikan sensor</button>
+    </div>
+    <p class="muted" id="sensorState">Sensor belum aktif.</p>
+    <video id="cameraVideo" playsinline muted></video>
+    <canvas id="cameraCanvas"></canvas>
+  </section>
+
+  <section class="panel">
+    <h2>3. Data yang diterima (MQTT subscribe)</h2>
+    <div class="grid">
+      <div class="metric">
+        <div class="caption">Cahaya / estimasi kecerahan</div>
+        <div class="value" id="lightValue">—</div>
+        <div class="caption" id="lightSource">Menunggu data HP A</div>
+      </div>
+      <div class="metric">
+        <div class="caption">Rata-rata cahaya</div>
+        <div class="value" id="lightAvg">—</div>
+        <div class="caption">Status: <span id="lightStatus">MENUNGGU DATA</span></div>
+      </div>
+      <div class="metric">
+        <div class="caption">RMS gerakan</div>
+        <div class="value" id="motionValue">—</div>
+        <div class="caption">Status: <span id="motionStatus">MENUNGGU DATA</span></div>
+      </div>
+      <div class="metric">
+        <div class="caption">Ringkasan SmartDesk</div>
+        <div class="value" id="overallStatus" style="font-size:1.1rem">MENUNGGU DATA</div>
+        <div class="caption">Indikator aktivitas, bukan bukti seseorang fokus atau tidak.</div>
+      </div>
+    </div>
+    <p class="muted">Topic subscribe: <code id="topicsLabel">smartdesk/kelompok-ganti-id/edge/+/telemetry</code></p>
+  </section>
+
+  <section class="panel">
+    <h2>4. Log MQTT</h2>
+    <div id="log" class="log">Dashboard siap. Connect MQTT untuk mulai.</div>
+  </section>
+
+  <section class="panel warning">
+    <h2>Catatan sensor browser</h2>
+    <p>Browser tidak selalu memberi akses ke sensor cahaya fisik. Jika Ambient Light Sensor tidak didukung, halaman akan menawarkan kamera sebagai <b>perkiraan kecerahan gambar</b>; nilainya bukan Lux. Akses sensor dan kamera umumnya memerlukan HTTPS (atau localhost) dan izin pengguna. Sensor gerak menggunakan DeviceMotionEvent.</p>
+  </section>
+</main>
+
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const brokerUrl = "wss://broker.hivemq.com:8884/mqtt";
+  let client = null;
+  let running = false;
+  let lightSensor = null;
+  let cameraStream = null;
+  let cameraTimer = null;
+  let motionHandler = null;
+  let lightSamples = [];
+  let motionSamples = [];
+  let latestLight = null;
+  let latestMotion = null;
+  let activeLightMode = "";
+  let lastPublishAt = 0;
+
+  const log = message => {
+    const line = `[${new Date().toLocaleTimeString()}] ${message}`;
+    $("log").textContent = line + "\n" + $("log").textContent;
+  };
+  const project = () => $("projectId").value.trim().replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 50);
+  const lightTopic = () => `smartdesk/${project()}/edge/light/telemetry`;
+  const motionTopic = () => `smartdesk/${project()}/edge/motion/telemetry`;
+  const telemetryFilter = () => `smartdesk/${project()}/edge/+/telemetry`;
+  const setConnection = text => $("connectionStatus").textContent = text;
+
+  function publish(topic, payload) {
+    if (!client || !client.connected) return;
+    client.publish(topic, JSON.stringify(payload), { qos: 0, retain: false }, err => {
+      if (err) log("Publish gagal: " + err.message);
+    });
+  }
+  function publishLight(data) {
+    latestLight = data;
+    publish(lightTopic(), { device_id: $("deviceId").value.trim() || "hpA", ...data, sent_at_ms: Date.now() });
+    render();
+  }
+  function publishMotion(data) {
+    latestMotion = data;
+    publish(motionTopic(), { device_id: $("deviceId").value.trim() || "hpB", ...data, sent_at_ms: Date.now() });
+    render();
+  }
+
+  $("connectBtn").addEventListener("click", () => {
+    if (!window.mqtt) { log("Pustaka MQTT.js gagal dimuat. Periksa internet."); return; }
+    if (!project()) { log("Project ID wajib diisi."); return; }
+    if (client) { client.end(true); client = null; }
+    setConnection("Menghubungkan…");
+    client = mqtt.connect(brokerUrl, {
+      clientId: `sd_${Math.random().toString(16).slice(2, 12)}`,
+      clean: true, connectTimeout: 10000, reconnectPeriod: 3000,
+      keepalive: 30
+    });
+    client.on("connect", () => {
+      setConnection("Terhubung");
+      $("connectBtn").disabled = true;
+      $("disconnectBtn").disabled = false;
+      client.subscribe(telemetryFilter(), { qos: 0 }, err => {
+        if (err) log("Subscribe gagal: " + err.message);
+        else log("SUBSCRIBE " + telemetryFilter());
+      });
+      log("Terhubung ke HiveMQ via WebSocket TLS.");
+      updateRoleUI();
+    });
+    client.on("reconnect", () => setConnection("Menyambungkan ulang…"));
+    client.on("offline", () => setConnection("Offline"));
+    client.on("error", err => log("MQTT error: " + err.message));
+    client.on("message", (topic, bytes) => {
+      let data;
+      try { data = JSON.parse(bytes.toString()); } catch { return; }
+      if (topic === lightTopic()) latestLight = data;
+      if (topic === motionTopic()) latestMotion = data;
+      render();
+    });
+  });
+
+  $("disconnectBtn").addEventListener("click", () => {
+    stopSensor();
+    if (client) client.end(true);
+    client = null;
+    $("connectBtn").disabled = false;
+    $("disconnectBtn").disabled = true;
+    setConnection("Terputus");
+    log("Koneksi MQTT diputus.");
+    updateRoleUI();
+  });
+
+  $("deviceRole").addEventListener("change", () => {
+    stopSensor();
+    updateRoleUI();
+  });
+  $("projectId").addEventListener("change", () => {
+    $("topicsLabel").textContent = telemetryFilter();
+    if (client && client.connected) {
+      client.subscribe(telemetryFilter());
+      log("Subscribe diperbarui: " + telemetryFilter());
+    }
+  });
+  $("deviceId").addEventListener("change", () => updateRoleUI());
+
+  function updateRoleUI() {
+    const role = $("deviceRole").value;
+    const connected = !!client && client.connected;
+    $("startSensorBtn").disabled = !connected || role === "monitor" || running;
+    $("stopSensorBtn").disabled = !running;
+    if (role === "monitor") {
+      $("sensorHint").textContent = "Mode monitor: dashboard hanya subscribe dan menampilkan data dari HP yang mengirim sensor.";
+    } else if (role === "light") {
+      $("sensorHint").textContent = "Mode HP A: halaman web mencoba sensor cahaya fisik; jika tidak didukung, gunakan perkiraan kecerahan dari kamera.";
+    } else {
+      $("sensorHint").textContent = "Mode HP B: halaman web membaca gerakan melalui DeviceMotionEvent.";
+    }
+    $("topicsLabel").textContent = telemetryFilter();
+  }
+
+  $("startSensorBtn").addEventListener("click", async () => {
+    if (!client || !client.connected) { log("Hubungkan MQTT terlebih dahulu."); return; }
+    running = true;
+    updateRoleUI();
+    try {
+      if ($("deviceRole").value === "light") await startLight();
+      else if ($("deviceRole").value === "motion") await startMotion();
+    } catch (err) {
+      log("Sensor gagal dimulai: " + (err && err.message ? err.message : String(err)));
+      $("sensorState").textContent = "Sensor gagal dimulai. Periksa izin dan dukungan browser.";
+      running = false;
+      updateRoleUI();
+    }
+  });
+  $("stopSensorBtn").addEventListener("click", stopSensor);
+
+  async function startLight() {
+    if ("AmbientLightSensor" in window) {
+      try {
+        lightSensor = new AmbientLightSensor({ frequency: 1 });
+        lightSensor.addEventListener("reading", () => {
+          if (!running) return;
+          activeLightMode = "ambient";
+          const lux = Number(lightSensor.illuminance);
+          if (!Number.isFinite(lux)) return;
+          lightSamples.push(lux);
+          if (lightSamples.length > 5) lightSamples.shift();
+          const avg = lightSamples.reduce((a,b) => a+b, 0) / lightSamples.length;
+          $("sensorState").textContent = "Sensor cahaya fisik aktif (Lux).";
+          const now = Date.now();
+          if (now - lastPublishAt >= 1000) {
+            lastPublishAt = now;
+            publishLight({ sensor_type:"ambient-light", lux, lux_avg:avg, window:lightSamples.length });
+          }
+        });
+        lightSensor.addEventListener("error", async () => {
+          log("Ambient Light Sensor tidak tersedia/ditolak; beralih ke perkiraan kamera.");
+          try { lightSensor.stop(); } catch {}
+          lightSensor = null;
+          if (running) await startCameraBrightness();
+        });
+        lightSensor.start();
+        activeLightMode = "ambient";
+        $("sensorState").textContent = "Meminta data sensor cahaya fisik…";
+        log("Sensor cahaya browser dimulai.");
+        return;
+      } catch (err) {
+        lightSensor = null;
+        log("Ambient Light Sensor tidak bisa digunakan: " + err.message);
+      }
+    }
+    await startCameraBrightness();
+  }
+
+  async function startCameraBrightness() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error("Browser tidak mendukung kamera. Coba Chrome Android dan akses melalui HTTPS.");
+    }
+    cameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode:"environment" }, audio:false });
+    const video = $("cameraVideo");
+    video.srcObject = cameraStream;
+    await video.play();
+    activeLightMode = "camera";
+    $("sensorState").textContent = "Kamera aktif: menghitung kecerahan gambar (bukan Lux).";
+    log("Kamera aktif sebagai fallback untuk estimasi kecerahan.");
+    const canvas = $("cameraCanvas");
+    const ctx = canvas.getContext("2d", { willReadFrequently:true });
+    cameraTimer = setInterval(() => {
+      if (!running || video.readyState < 2 || !video.videoWidth) return;
+      canvas.width = 32; canvas.height = 24;
+      ctx.drawImage(video, 0, 0, 32, 24);
+      const pixels = ctx.getImageData(0, 0, 32, 24).data;
+      let total = 0, count = 0;
+      for (let i = 0; i < pixels.length; i += 4) {
+        total += 0.2126*pixels[i] + 0.7152*pixels[i+1] + 0.0722*pixels[i+2];
+        count++;
+      }
+      const brightness = total / count; // scale 0..255; not lux
+      lightSamples.push(brightness);
+      if (lightSamples.length > 5) lightSamples.shift();
+      const avg = lightSamples.reduce((a,b) => a+b, 0) / lightSamples.length;
+      const now = Date.now();
+      if (now - lastPublishAt >= 1000) {
+        lastPublishAt = now;
+        publishLight({ sensor_type:"camera-brightness-estimate", brightness_estimate:Number(brightness.toFixed(1)), brightness_avg:Number(avg.toFixed(1)), window:lightSamples.length });
+      }
+    }, 250);
+  }
+
+  async function startMotion() {
+    if (!("DeviceMotionEvent" in window)) throw new Error("DeviceMotionEvent tidak didukung browser ini.");
+    if (typeof DeviceMotionEvent.requestPermission === "function") {
+      const permission = await DeviceMotionEvent.requestPermission();
+      if (permission !== "granted") throw new Error("Izin gerakan tidak diberikan.");
+    }
+    motionSamples = [];
+    motionHandler = event => {
+      if (!running) return;
+      const a = event.accelerationIncludingGravity || event.acceleration;
+      if (!a || a.x == null || a.y == null || a.z == null) return;
+      const magnitude = Math.sqrt(a.x*a.x + a.y*a.y + a.z*a.z);
+      // If accelerationIncludingGravity is used, subtract approximate gravity magnitude.
+      const dynamic = magnitude - 9.81;
+      motionSamples.push(dynamic);
+      if (motionSamples.length > 10) motionSamples.shift();
+      const rms = Math.sqrt(motionSamples.reduce((sum,v) => sum + v*v, 0) / motionSamples.length);
+      const now = Date.now();
+      if (now - lastPublishAt >= 1000) {
+        lastPublishAt = now;
+        $("sensorState").textContent = "Sensor gerak aktif (DeviceMotionEvent).";
+        publishMotion({ motion_rms:Number(rms.toFixed(3)), sample_count:motionSamples.length, unit:"m/s2" });
+      }
+    };
+    window.addEventListener("devicemotion", motionHandler);
+    $("sensorState").textContent = "Menunggu pembacaan gerakan…";
+    log("Sensor gerak browser dimulai.");
+  }
+
+  function stopSensor() {
+    running = false;
+    if (lightSensor) { try { lightSensor.stop(); } catch {} lightSensor = null; }
+    if (cameraTimer) { clearInterval(cameraTimer); cameraTimer = null; }
+    if (cameraStream) { cameraStream.getTracks().forEach(t => t.stop()); cameraStream = null; }
+    if (motionHandler) { window.removeEventListener("devicemotion", motionHandler); motionHandler = null; }
+    $("cameraVideo").srcObject = null;
+    $("sensorState").textContent = "Sensor tidak aktif.";
+    $("stopSensorBtn").disabled = true;
+    updateRoleUI();
+  }
+
+  function render() {
+    if (latestLight) {
+      if (latestLight.sensor_type === "camera-brightness-estimate") {
+        $("lightValue").textContent = `${latestLight.brightness_estimate ?? "—"} / 255`;
+        $("lightAvg").textContent = `${latestLight.brightness_avg ?? "—"} / 255`;
+        $("lightSource").textContent = "Estimasi kamera; bukan Lux";
+        $("lightStatus").textContent = Number(latestLight.brightness_avg) < 80 ? "GELAP (ESTIMASI)" : "CUKUP TERANG (ESTIMASI)";
+      } else {
+        $("lightValue").textContent = `${Number(latestLight.lux).toFixed(1)} lux`;
+        $("lightAvg").textContent = `${Number(latestLight.lux_avg).toFixed(1)} lux`;
+        $("lightSource").textContent = `Sumber: ${latestLight.device_id || "HP A"}`;
+        $("lightStatus").textContent = Number(latestLight.lux_avg) < 300 ? "CAHAYA BURUK" : "CAHAYA MEMADAI";
+      }
+    }
+    if (latestMotion) {
+      $("motionValue").textContent = `${latestMotion.motion_rms} m/s²`;
+      $("motionStatus").textContent = Number(latestMotion.motion_rms) > 0.7 ? "AKTIVITAS TINGGI" : "GERAKAN RENDAH";
+    }
+    const hasL = !!latestLight, hasM = !!latestMotion;
+    if (!hasL || !hasM) $("overallStatus").textContent = "MENUNGGU DATA " + (!hasL ? "CAHAYA " : "") + (!hasM ? "GERAKAN" : "");
+    else if (Number(latestMotion.motion_rms) > 0.7) $("overallStatus").textContent = "AKTIVITAS TINGGI";
+    else if (latestLight.sensor_type === "camera-brightness-estimate" ? Number(latestLight.brightness_avg) < 80 : Number(latestLight.lux_avg) < 300) $("overallStatus").textContent = "CAHAYA PERLU DIPERIKSA";
+    else $("overallStatus").textContent = "TERPANTAU";
+  }
+
+  $("topicsLabel").textContent = telemetryFilter();
+  updateRoleUI();
+})();
+</script>
+</body>
+</html>
