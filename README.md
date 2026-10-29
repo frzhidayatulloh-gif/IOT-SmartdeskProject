@@ -106,25 +106,18 @@ Sistem tidak bisa memastikan seseorang benar-benar belajar atau meninggalkan kur
 ## Struktur
 ```text
 smartdesk-iot/
-├── .env.example
-├── .gitignore
-├── requirements.txt
+├── README.md
 ├── mqtt_common.py
 ├── edge_light.py
 ├── edge_motion.py
-├── dashboard/
+├── dashboard/                 
 │   └── index.html
-└── README.md
+│
+├── smartdesk-web-iot/           
+│   ├── README.md
+│   └── dashboard/
+│       └── index.html
+│
+└── docs/                        
+    └── index.html
 ```
-
-## GitHub
-Buat repository kosong di GitHub, lalu dari folder ini:
-```bash
-git init
-git add .
-git commit -m "Initial SmartDesk IoT implementation"
-git branch -M main
-git remote add origin https://github.com/USERNAME/smartdesk-iot.git
-git push -u origin main
-```
-Ganti `USERNAME` dengan akun GitHub kamu. Jangan unggah file `.env` yang berisi kredensial atau informasi privat.
