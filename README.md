@@ -297,19 +297,13 @@ smartdesk-iot/
 ├── edge_motion.py
 ├── dashboard/
 │   └── index.html
-├── smartdesk-web-iot/
-│   ├── README.md
-│   └── dashboard/
-│       └── index.html
 └── docs/
     └── index.html
 ```
 
 Keterangan:
 
-- File Python dan `mqtt_common.py` digunakan untuk Ide 1.
-- Folder `smartdesk-web-iot/` menyimpan implementasi Ide 2.
-- Folder `dashboard/` pada root merupakan dashboard dari implementasi Python, sesuai struktur proyek awal.
+- Folder `dashboard/` pada root merupakan dashboard dari implementasi Python.
 - Folder `docs/` digunakan untuk GitHub Pages jika Pages dikonfigurasi agar menerbitkan isi folder tersebut.
 
 Kedua alternatif dapat dikembangkan dan diuji secara terpisah. Untuk demonstrasi, pilih salah satu implementasi dan pastikan pengirim serta dashboard menggunakan format payload dan topik MQTT yang sesuai.
