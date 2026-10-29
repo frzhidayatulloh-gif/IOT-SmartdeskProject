@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SmartDesk — Focus Monitor</title>
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<style>
+:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif;color:#e9eef8;background:#0b1020}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at top,#17264a 0,#0b1020 55%);min-height:100vh}
+main{max-width:1100px;margin:auto;padding:28px 18px 50px}.top{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+h1{margin:0;font-size:clamp(27px,4vw,40px);letter-spacing:-1px}.sub{color:#aab7d2;margin-top:8px}
+.pill{border:1px solid #344260;border-radius:999px;padding:8px 12px;color:#cbd5e1;font-size:13px}
+.panel{background:#121a2e;border:1px solid #283550;border-radius:18px;padding:18px;margin-top:18px;box-shadow:0 14px 40px #0002}
+.controls{display:grid;grid-template-columns:minmax(200px,1fr) auto auto;gap:10px;align-items:end}
+label{display:block;font-size:12px;color:#9eacc7;margin-bottom:7px}input{width:100%;background:#0b1223;border:1px solid #344260;border-radius:10px;color:white;padding:12px}
+button{border:0;border-radius:10px;padding:12px 16px;font-weight:700;cursor:pointer;background:#8db7ff;color:#0a1428}button.secondary{background:#263653;color:#e5edff}button.danger{background:#ffb4a9;color:#38120d}
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-top:16px}
+.metric{background:#121a2e;border:1px solid #283550;border-radius:16px;padding:18px;min-height:135px}
+.kicker{color:#9eacc7;font-size:13px}.value{font-size:clamp(25px,4vw,36px);font-weight:750;margin:12px 0 5px;overflow-wrap:anywhere}.unit{font-size:13px;color:#9eacc7}.hint{font-size:12px;color:#8d9ab4}
+.status{display:flex;gap:10px;align-items:center;font-weight:750;font-size:22px}.dot{width:10px;height:10px;border-radius:50%;background:#77839b}.good{color:#78e0b5}.warn{color:#ffd479}.bad{color:#ff9e9e}
+.log{font:12px ui-monospace,monospace;white-space:pre-wrap;color:#aab7d2;max-height:160px;overflow:auto}
+footer{color:#7786a5;font-size:12px;margin-top:18px;line-height:1.6}
+@media(max-width:700px){.controls{grid-template-columns:1fr 1fr}.controls>div:first-child{grid-column:1/-1}.grid{grid-template-columns:1fr}.metric{min-height:auto}}
+</style>
+</head>
+<body><main>
+<header class="top"><div><h1>SmartDesk</h1><div class="sub">Pemantau fokus belajar · sensor real-time via MQTT</div></div><div class="pill" id="connection">● Belum terhubung</div></header>
+<section class="panel">
+<div class="controls">
+<div><label for="project">PROJECT ID (harus sama dengan .env di kedua HP)</label><input id="project" value="kelompok-ganti-id" autocomplete="off"></div>
+<button id="connect">Connect</button><button class="secondary" id="disconnect">Disconnect</button>
+</div>
+<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:15px">
+<button id="arm">ARM — Mulai pantau</button><button class="danger" id="disarm">DISARM — Hentikan pantau</button>
+<span class="pill" id="armstate">Mode: belum diketahui</span>
+</div>
+</section>
+<div class="grid">
+<section class="metric"><div class="kicker">STATUS SMARTDESK</div><div class="status value" id="overall"><span class="dot"></span><span>MENUNGGU DATA</span></div><div class="hint" id="reason">Hubungkan dashboard dan jalankan kedua edge device.</div></section>
+<section class="metric"><div class="kicker">CAHAYA · HP A</div><div class="value" id="lux">—</div><div class="unit">Lux saat ini</div><div class="hint" id="luxavg">Moving average: —</div><div class="hint" id="lighttime">Belum ada data</div></section>
+<section class="metric"><div class="kicker">GERAK · HP B</div><div class="value" id="rms">—</div><div class="unit">RMS percepatan dinamis · m/s²</div><div class="hint" id="motiontime">Belum ada data</div></section>
+</div>
+<section class="panel"><h3 style="margin-top:0">Log telemetri</h3><div id="log" class="log">Belum ada pesan MQTT.</div></section>
+<footer>MQTT over secure WebSocket ke broker.hivemq.com:8884/mqtt. Dashboard harus dibuka lewat server HTTP lokal, bukan file://. Broker publik digunakan bersama; gunakan Project ID unik. Status aktivitas hanyalah indikator gerakan, bukan bukti pasti pengguna fokus atau meninggalkan kursi.</footer>
+</main>
+<script>
+(() => {
+ const $ = id => document.getElementById(id);
+ let client = null, light = null, motion = null, armed = null;
+ const thresholdLux = 300, thresholdRms = 0.7;
+ const stamp = () => new Date().toLocaleTimeString();
+ function log(line) { const el=$("log"); el.textContent=`[${stamp()}] ${line}\n`+el.textContent; el.textContent=el.textContent.slice(0,5000); }
+ function connection(text, ok=false) { $("connection").textContent=(ok?"● ":"● ")+text; $("connection").style.color=ok?"#78e0b5":"#ffd479"; }
+ function refresh() {
+   $("armstate").textContent = "Mode: " + (armed===null?"belum diketahui":armed?"ARMED":"DISARMED");
+   let status="MENUNGGU DATA", reason="Menunggu data dari kedua HP.", cls="";
+   if (armed===false) { status="DISARMED"; reason="Pemantauan dinonaktifkan dari dashboard."; }
+   else if (!light || !motion) { status="MENUNGGU DATA"; reason="Pastikan kedua HP menjalankan program edge."; }
+   else if (motion.motion_rms >= thresholdRms) { status="AKTIVITAS TINGGI"; reason="RMS gerakan melewati ambang awal."; cls="warn"; }
+   else if (light.lux_avg < thresholdLux) { status="CAHAYA BURUK"; reason="Moving average cahaya di bawah "+thresholdLux+" lux."; cls="bad"; }
+   else { status="TERPANTAU"; reason="Cahaya memadai dan aktivitas gerak di bawah ambang."; cls="good"; }
+   $("overall").innerHTML=`<span class="dot" style="background:${cls==="good"?"#78e0b5":cls==="bad"?"#ff9e9e":cls==="warn"?"#ffd479":"#77839b"}"></span><span>${status}</span>`;
+   $("overall").className="status value "+cls; $("reason").textContent=reason;
+ }
+ function connect() {
+   if (client) client.end(true);
+   const project=$("project").value.trim().replace(/[^a-zA-Z0-9_-]/g,"");
+   if(!project){alert("Isi Project ID.");return;}
+   $("project").value=project;
+   const base=`smartdesk/${project}`;
+   connection("Menghubungkan…");
+   client=mqtt.connect("wss://broker.hivemq.com:8884/mqtt",{
+     clientId:"sdweb_"+Math.random().toString(16).slice(2,12),
+     clean:true,connectTimeout:10000,reconnectPeriod:3000
+   });
+   client.on("connect",()=>{connection("Terhubung ke MQTT",true);client.subscribe(`${base}/edge/+/telemetry`);client.subscribe(`${base}/state`);log("Terhubung; subscribe telemetri.");});
+   client.on("reconnect",()=>connection("Mencoba menghubungkan ulang…"));
+   client.on("error",e=>{connection("Error MQTT");log("MQTT error: "+e.message);});
+   client.on("close",()=>connection("Koneksi tertutup"));
+   client.on("message",(topic,payload)=>{
+     try {
+       const d=JSON.parse(payload.toString());
+       if(topic===`${base}/edge/light/telemetry`){light=d;$("lux").textContent=Number(d.lux).toFixed(1);$("luxavg").textContent="Moving average: "+Number(d.lux_avg).toFixed(1)+" lux";$("lighttime").textContent="Diterima "+stamp();}
+       else if(topic===`${base}/edge/motion/telemetry`){motion=d;$("rms").textContent=Number(d.motion_rms).toFixed(3);$("motiontime").textContent="Diterima "+stamp();}
+       else if(topic===`${base}/state` && d.command){armed=d.command==="ARM";}
+       log(topic+"  "+JSON.stringify(d));refresh();
+     } catch(e){log("Payload tidak valid: "+e.message);}
+   });
+ }
+ function command(cmd) {
+   if(!client || !client.connected){alert("Hubungkan dashboard ke MQTT terlebih dahulu.");return;}
+   const base=`smartdesk/${$("project").value.trim()}`;
+   client.publish(`${base}/control`,JSON.stringify({command:cmd,sent_at_ms:Date.now()}),{qos:1});
+   armed=cmd==="ARM"; refresh(); log("Perintah dikirim: "+cmd);
+ }
+ $("connect").addEventListener("click",connect);
+ $("disconnect").addEventListener("click",()=>{if(client){client.end(true);client=null;}connection("Terputus");});
+ $("arm").addEventListener("click",()=>command("ARM"));
+ $("disarm").addEventListener("click",()=>command("DISARM"));
+ refresh();
+})();
+</script>
+</body></html>
