@@ -251,8 +251,8 @@ Jika dashboard perlu dibuka dari perangkat lain melalui jaringan lokal, gunakan 
 
 ### Ide 2 — Browser Sensor
 
-1. Publikasikan halaman dashboard melalui hosting HTTPS.
-2. Buka halaman yang sama pada HP A, HP B, dan laptop.
+1. akses web "https://frzhidayatulloh-gif.github.io/IOT-SmartdeskProject/"
+2. Buka web yang sama pada HP A, HP B, dan laptop.
 3. Pada HP A, pilih **HP A — Sensor cahaya**, gunakan Device ID `hpA`, lalu klik Connect MQTT dan Mulai baca sensor.
 4. Pada HP B, pilih **HP B — Sensor gerak**, gunakan Device ID `hpB`, lalu klik Connect MQTT dan Mulai baca sensor.
 5. Pada laptop, pilih **Dashboard monitor**, gunakan Project ID yang sama, lalu klik Connect MQTT.
